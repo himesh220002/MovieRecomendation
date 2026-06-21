@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie Recommendation System Context & Architecture</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --text-color: #e2e8f0;
+            --accent-color: #e50914; /* Netflix Red */
+            --card-bg: #1e293b;
+            --border-color: #334155;
+            --table-header-bg: #b91c1c;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            margin: 0;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        h1, h2, h3, h4 {
+            color: #f8fafc;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            color: var(--accent-color);
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 0.75rem;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .mermaid {
+            background-color: #ffffff;
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+            margin-top: 1rem;
+            margin-bottom: 1rem;
+            text-align: center;
+            overflow-x: auto;
+        }
+
+        .domain-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .domain-card {
+            background-color: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+        }
+
+        .domain-card h3 {
+            margin-top: 0;
+            color: var(--accent-color);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+            margin-bottom: 1rem;
+            background-color: rgba(255, 255, 255, 0.05);
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+
+        th, td {
+            border: 1px solid var(--border-color);
+            padding: 12px;
+            text-align: left;
+        }
+
+        th {
+            background-color: var(--table-header-bg);
+            color: white;
+            font-weight: 600;
+        }
+        
+        code {
+            background-color: rgba(0,0,0,0.3);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: #38bdf8;
+        }
+
+        /* Progress Tracking CSS */
+        .tag-active { background-color: #eab308; color: #000; padding: 4px 8px; border-radius: 6px; font-weight: 800; font-size: 0.8rem; margin-left: 10px; vertical-align: middle; }
+        .tag-done { background-color: #22c55e; color: #000; padding: 4px 8px; border-radius: 6px; font-weight: 800; font-size: 0.8rem; margin-left: 10px; vertical-align: middle; }
+        .tag-fx { background-color: #f97316; color: #fff; padding: 4px 8px; border-radius: 6px; font-weight: 800; font-size: 0.8rem; margin-left: 10px; vertical-align: middle; }
+        .tag-up { background-color: #3b82f6; color: #fff; padding: 4px 8px; border-radius: 6px; font-weight: 800; font-size: 0.8rem; margin-left: 10px; vertical-align: middle; }
+    </style>
+    <!-- Include Mermaid.js -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad: true, theme: 'default'});</script>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🍿 Movie Recommendation System & Watchlist Tracker <span class="tag-done">✅ DONE</span></h1>
+        <p style="font-size: 1.1rem; color: #94a3b8; margin-bottom: 2rem;">
+            A Netflix-style, fully automated Streamlit dashboard featuring Content-Based NLP recommendations, genre sorting, TMDB API fallbacks, and persistent user-state management with 1-10 rating systems.
+        </p>
+
+        <div class="card">
+            <h2>1️⃣ System Overview & Objectives <span class="tag-done">✅ DONE</span></h2>
+            <p>The goal of this project is to parse a raw CSV dataset of nearly 10,000 movies and transform it into an interactive, highly personalized streaming dashboard experience.</p>
+            <ul>
+                <li><strong>Dynamic Exploration:</strong> Filter movies by genre, release year, and popularity dynamically without reloading the page.</li>
+                <li><strong>NLP Recommendations:</strong> Content-based filtering using TF-IDF text analysis on movie overviews.</li>
+                <li><strong>State Automation & Rating:</strong> Persistent JSON databases track "Watched", "Currently Watching", or "My List". Users can rate interacted movies out of 10.</li>
+                <li><strong>Immersive Details:</strong> Clicking a movie card loads a detailed view containing trailers, clips, and full metadata.</li>
+                <li><strong>API Fallbacks:</strong> If the CSV is missing a <code>Poster_Url</code>, the system automatically falls back to fetching posters dynamically from TMDB/IMDB APIs.</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h2>2️⃣ Comprehensive Ingestion & Processing Workflow <span class="tag-active">▶ ACTIVE</span></h2>
+            <p>This workflow defines how raw data enters the system and is enriched before hitting the UI.</p>
+
+            <div class="mermaid">
+                graph TD
+                classDef database fill:#0f172a,stroke:#e50914,stroke-width:2px,color:#fff;
+                classDef process fill:#334155,stroke:#f59e0b,stroke-width:2px,color:#fff;
+                classDef external fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#fff;
+                classDef active fill:#eab308,stroke:#000,stroke-width:2px,color:#000;
+                classDef done fill:#22c55e,stroke:#000,stroke-width:2px,color:#000;
+
+                CSV[(Raw CSV Dataset)]:::done
+                P1[Pandas Ingestion<br/>Clean Nulls & Extract Genres]:::done
+                API((TMDB/IMDB API<br/>Fallback Fetcher)):::process
+                YT((YouTube API<br/>Trailer Fetcher)):::process
+                P2[Enrichment Engine<br/>Check Poster URLs]:::process
+                NLP[TF-IDF NLP Engine<br/>Cosine Matrix]:::done
+                UI[Streamlit Dashboard]:::process
+
+                CSV --> P1
+                P1 --> P2
+                P2 -- Missing Poster --> API
+                P2 -- User clicks Movie --> YT
+                API --> P2
+                P2 --> NLP
+                NLP --> UI
+            </div>
+            
+            <h3 style="color: var(--accent-color); margin-top: 1.5rem;">API Fallback Strategy <span class="tag-done">✅ DONE</span></h3>
+            <p>The system relies heavily on visual movie posters. If a row in the CSV has a blank or broken <code>Poster_Url</code>, the ingestion pipeline will dynamically ping the TMDB/IMDB API using the movie's <code>Title</code> and <code>Release_Date</code> to retrieve a high-quality poster image, ensuring the UI never looks broken.</p>
+        </div>
+
+        <div class="card">
+            <h2>3️⃣ Methods & Tech <span class="tag-done">✅ DONE</span></h2>
+            <p>The tech stack leverages modern Python data science and frontend bridging tools:</p>
+            <ul>
+                <li><strong>Frontend:</strong> <code>Streamlit</code> for rapid UI prototyping, layout columns, and session state.</li>
+                <li><strong>Data Manipulation:</strong> <code>Pandas</code> for high-performance CSV reading, null-value dropping, and string parsing (converting comma-separated genres into Python lists).</li>
+                <li><strong>Machine Learning:</strong> <code>Scikit-learn</code> for the NLP pipeline.</li>
+                <li><strong>External APIs:</strong> <code>Requests</code> module to fetch TMDB posters and YouTube trailer embed links.</li>
+                <li><strong>State Persistence:</strong> <code>JSON</code> standard library to act as a lightweight local database for user watch history and ratings.</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h2>4️⃣ Algorithms Used <span class="tag-done">✅ DONE</span></h2>
+            <p>The brain of the system uses <strong>Content-Based Filtering</strong> rather than Collaborative Filtering. This means it doesn't need thousands of other users to figure out what you like—it only needs to know the movies you interact with.</p>
+
+            <div class="domain-grid">
+                <div class="domain-card">
+                    <h3>TF-IDF Vectorization <span class="tag-done">✅ DONE</span></h3>
+                    <p><em>(Term Frequency-Inverse Document Frequency)</em><br/>The system mathematically converts the English text in the <code>Overview</code> column into numerical vectors, assigning higher importance to rare, descriptive plot words while ignoring common words like "the".</p>
+                </div>
+                <div class="domain-card">
+                    <h3>Cosine Similarity <span class="tag-done">✅ DONE</span></h3>
+                    <p>Calculates the angular distance between a requested movie's vector and all 9,848 other movie vectors. A score of 1.0 means identical plots; 0.0 means completely unrelated. The highest scores are returned as recommendations.</p>
+                </div>
+                <div class="domain-card">
+                    <h3>Weighted Popularity Sorting <span class="tag-done">✅ DONE</span></h3>
+                    <p>Pure text similarity isn't enough. We multiply the cosine score by a genre-overlap penalty and add a slight popularity boost (using <code>Vote_Average</code> and <code>Popularity</code> columns) to prevent recommending highly obscure, poorly-rated films.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>5️⃣ Packages & Tools <span class="tag-done">✅ DONE</span></h2>
+            <p>Required Python libraries for the virtual environment:</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Package</th>
+                        <th>Version</th>
+                        <th>Purpose</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>streamlit</code></td><td>latest</td><td>The core interactive web framework and UI components.</td></tr>
+                    <tr><td><code>pandas</code></td><td>latest</td><td>DataFrame management, CSV parsing, and data cleaning.</td></tr>
+                    <tr><td><code>scikit-learn</code></td><td>latest</td><td>Provides <code>TfidfVectorizer</code> and <code>cosine_similarity</code>.</td></tr>
+                    <tr><td><code>requests</code></td><td>latest</td><td>HTTP client for TMDB/IMDB poster fallbacks and YouTube links.</td></tr>
+                    <tr><td><code>pytest</code></td><td>latest</td><td>For testing the NLP logic and data pipeline securely.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>6️⃣ Streamlit UI Blueprint & Functional Flow <span class="tag-done">✅ DONE</span></h2>
+            <p>The frontend is divided into distinct tabs with deep-dive interactions.</p>
+
+            <div style="background-color: rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid var(--accent-color); margin-bottom: 1rem;">
+                <h3>📺 Tab 1: Discover (The Netflix View)</h3>
+                <p>Features horizontally scrolling rows of posters: <em>Trending Now, Top Rated, New Releases</em>, and <em>Because you watched [X]</em>.</p>
+            </div>
+
+            <div style="background-color: rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid var(--accent-color); margin-bottom: 1rem;">
+                <h3>🔍 Tab 2: Search & Filter</h3>
+                <p>Power-user dashboard containing <code>st.multiselect</code> for Genres, <code>st.slider</code> for Release Date, and text search. Results update instantly.</p>
+            </div>
+            
+            <div style="background-color: rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid var(--accent-color); margin-bottom: 1rem;">
+                <h3>📚 Tab 3: My Library & Ratings</h3>
+                <p>Shows all movies marked as "My List", "Currently Watching", or "Watched". Users can update the status or assign a <strong>Rating (1 to 10 stars)</strong> to any movie in their library.</p>
+            </div>
+
+            <h3 style="color: var(--accent-color); margin-top: 1.5rem;">🎬 Interactive Movie Details View <span class="tag-done">✅ DONE</span></h3>
+            <p>When a user clicks on ANY movie poster card across the app, a dedicated details view opens (via <code>st.dialog</code> or an expander). This view contains:</p>
+            <ul>
+                <li>High-resolution poster and full metadata (Release Date, Language, Rating).</li>
+                <li>The full plot <code>Overview</code>.</li>
+                <li><strong>Embedded Media:</strong> YouTube trailers or clips fetched dynamically.</li>
+                <li><strong>Action Buttons:</strong> "Add to My List", "Mark as Watched", "Rate 1-10".</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h2>7️⃣ Project Building Pipeline <span class="tag-done">✅ DONE</span></h2>
+            <p>The logical progression of how the codebase will be constructed:</p>
+            <ol>
+                <li><strong>Data Layer: <span class="tag-done">✅ DONE</span></strong> Build <code>data_loader.py</code> to ingest the CSV, handle TMDB poster fallbacks, and standardize data types.</li>
+                <li><strong>NLP Layer: <span class="tag-done">✅ DONE</span></strong> Build <code>recommender.py</code> to calculate the TF-IDF matrices and expose a <code>get_similar_movies(title)</code> function.</li>
+                <li><strong>State Layer: <span class="tag-done">✅ DONE</span></strong> Build <code>user_state.py</code> to handle JSON read/writes for watchlists and 1-10 ratings.</li>
+                <li><strong>UI Layer: <span class="tag-done">✅ DONE</span></strong> Build <code>app.py</code> (Streamlit) tying the components together with tabs, carousels, and detailed pop-up views.</li>
+            </ol>
+        </div>
+
+        <div class="card">
+            <h2>8️⃣ Testing Architecture <span class="tag-done">✅ DONE</span></h2>
+            <p>To ensure a production-ready system, we implement a robust test suite:</p>
+            <div class="mermaid">
+                graph TD
+                classDef test fill:#0f172a,stroke:#3b82f6,stroke-width:2px,color:#fff;
+                classDef module fill:#334155,stroke:#f59e0b,stroke-width:2px,color:#fff;
+
+                Suite["🧪 Pytest Test Suite<br/>(tests/)"]:::test --> M1
+                Suite --> M2
+                Suite --> M3
+
+                M1["🧠 NLP Logic Tests"]:::module -->|"Validates cosine similarity outputs"| Pass1["✅ Pass"]
+                M2["⚙️ Data Pipeline Tests"]:::module -->|"Tests TMDB API Fallback mock"| Pass1
+                M3["💾 State Manager Tests"]:::module -->|"Verifies JSON rating persistence"| Pass1
+            </div>
+            <p>Automated tests will verify that the TF-IDF matrix doesn't crash on null overviews, that the TMDB fallback function correctly handles network timeouts, and that user ratings (1-10) are securely saved to the JSON file.</p>
+        </div>
+
+    </div>
+</body>
+
+</html>

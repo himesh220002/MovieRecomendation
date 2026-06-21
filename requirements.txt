@@ -1,0 +1,6 @@
+pandas
+requests
+pytest
+scikit-learn
+streamlit
+youtube-search-python
