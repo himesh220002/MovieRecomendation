@@ -24,7 +24,8 @@ st.set_page_config(page_title="Netflix Clone: AI Recommender", layout="wide", pa
 # Load Backend (Cached)
 @st.cache_data
 def load_data():
-    return load_movie_dataset("../datasets/mymoviedb (1).csv")
+    # Use relative path inside the project directory so Streamlit Cloud can find it!
+    return load_movie_dataset("data/mymoviedb.csv")
 
 @st.cache_resource
 def load_recommender(_df):
