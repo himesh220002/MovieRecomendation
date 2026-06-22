@@ -9,20 +9,38 @@ logger = logging.getLogger(__name__)
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", None)
 DEFAULT_POSTER_URL = "https://via.placeholder.com/500x750?text=No+Poster+Available"
 
-def fetch_poster_fallback(title: str, year: str = None) -> str:
+import urllib.parse
+
+def fetch_poster_fallback(title: str, media_type: str = "Movie", year: str = None) -> str:
     """
-    Fetches a movie poster from the TMDB API.
-    If no API key is set or the request fails, returns a default placeholder image.
+    Fetches a movie or TV poster dynamically.
+    For TV shows, it uses TVMaze (free, no API key).
+    For Movies, it uses TMDB if TMDB_API_KEY is set.
     """
+    if media_type == "TV Series":
+        try:
+            search_url = f"https://api.tvmaze.com/search/shows?q={urllib.parse.quote(title)}"
+            response = requests.get(search_url, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+            if data and len(data) > 0 and 'show' in data[0] and 'image' in data[0]['show'] and data[0]['show']['image']:
+                return data[0]['show']['image'].get('original', DEFAULT_POSTER_URL)
+        except Exception as e:
+            logger.error(f"Error fetching TVMaze poster for '{title}': {e}")
+            return DEFAULT_POSTER_URL
+
     if not TMDB_API_KEY:
         logger.warning("TMDB_API_KEY not found. Using default poster for '%s'.", title)
         return DEFAULT_POSTER_URL
 
     try:
-        # Note: This is a simplified TMDB search endpoint.
-        search_url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={title}"
+        endpoint = "tv" if media_type == "TV Series" else "movie"
+        search_url = f"https://api.themoviedb.org/3/search/{endpoint}?api_key={TMDB_API_KEY}&query={title}"
         if year:
-            search_url += f"&year={year}"
+            if endpoint == "tv":
+                search_url += f"&first_air_date_year={year}"
+            else:
+                search_url += f"&year={year}"
             
         response = requests.get(search_url, timeout=5)
         response.raise_for_status()
@@ -47,43 +65,101 @@ def parse_genres(genre_string):
         return []
     return [g.strip() for g in str(genre_string).split(",")]
 
-def load_movie_dataset(filepath: str) -> pd.DataFrame:
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Loads and cleans the raw movie CSV dataset.
+    Normalizes columns from different schemas (like TV Series) into the unified standard schema.
     """
-    logger.info(f"Loading dataset from {filepath}")
+    COLUMN_MAPPINGS = {
+        "IMDb Rating": "Vote_Average",
+        "Poster URL": "Poster_Url",
+        "Trailer URL": "Trailer_Url",
+        "Release Year": "Release_Date",
+        "Network": "Network",
+        "Seasons": "Seasons",
+        "Episodes": "Episodes"
+    }
+    df = df.rename(columns=COLUMN_MAPPINGS)
     
-    try:
-        # TMDB CSVs often have embedded newlines and long strings causing buffer overflows.
-        df = pd.read_csv(filepath, lineterminator='\n', engine='c')
-    except pd.errors.ParserError:
-        # Fallback to python engine which is slower but handles malformed data better
-        df = pd.read_csv(filepath, engine='python', on_bad_lines='skip')
-    except FileNotFoundError:
-        logger.error(f"Dataset not found at {filepath}")
-        raise
+    # Check if Media_Type can be inferred
+    if "Media_Type" not in df.columns:
+        if "Seasons" in df.columns or "Episodes" in df.columns:
+            df["Media_Type"] = "TV Series"
+        else:
+            df["Media_Type"] = "Movie"
+            
+    return df
+
+def load_all_datasets(data_dir: str = "data") -> pd.DataFrame:
+    """
+    Scans the data directory, loads all CSV files, normalizes their schemas, and merges them.
+    """
+    logger.info(f"Scanning directory for datasets: {data_dir}")
+    
+    if not os.path.exists(data_dir):
+        logger.error(f"Data directory not found at {data_dir}")
+        return pd.DataFrame()
+        
+    all_dfs = []
+    
+    for filename in os.listdir(data_dir):
+        if filename.endswith(".csv"):
+            filepath = os.path.join(data_dir, filename)
+            logger.info(f"Loading dataset from {filepath}")
+            try:
+                # TMDB CSVs often have embedded newlines
+                df = pd.read_csv(filepath, lineterminator='\n', engine='c')
+            except pd.errors.ParserError:
+                # Fallback to python engine
+                df = pd.read_csv(filepath, engine='python', on_bad_lines='skip')
+            except Exception as e:
+                logger.error(f"Failed to load {filepath}: {e}")
+                continue
+                
+            df = normalize_columns(df)
+            all_dfs.append(df)
+            
+    if not all_dfs:
+        logger.warning("No valid CSV datasets found.")
+        return pd.DataFrame()
+        
+    # Merge all datasets
+    final_df = pd.concat(all_dfs, ignore_index=True)
+    
+    # Drop duplicates by Title (keep the last one uploaded/merged)
+    if "Title" in final_df.columns:
+        final_df = final_df.drop_duplicates(subset=["Title"], keep="last")
         
     # Clean up null overviews so the NLP TF-IDF engine doesn't crash
-    df['Overview'] = df['Overview'].fillna("No overview available.")
+    if "Overview" not in final_df.columns:
+        final_df["Overview"] = "No overview available."
+    final_df['Overview'] = final_df['Overview'].fillna("No overview available.")
     
     # Clean up null titles
-    df['Title'] = df['Title'].fillna("Unknown Title")
+    final_df['Title'] = final_df['Title'].fillna("Unknown Title")
     
     # Parse Genre strings into Python lists
-    if 'Genre' in df.columns:
-        df['Genre_List'] = df['Genre'].apply(parse_genres)
+    if 'Genre' in final_df.columns:
+        final_df['Genre_List'] = final_df['Genre'].apply(parse_genres)
         
     # Apply poster fallback for missing posters
-    # In a real heavy dataset (10k rows), we wouldn't want to run this synchronously for every single row
-    # during load time. So we'll fill nulls with the default immediately, or apply fallback dynamically in the UI.
-    # For now, we will fill completely missing poster columns with the default URL.
-    if 'Poster_Url' in df.columns:
-        df['Poster_Url'] = df['Poster_Url'].fillna(DEFAULT_POSTER_URL)
+    if 'Poster_Url' in final_df.columns:
+        final_df['Poster_Url'] = final_df['Poster_Url'].fillna(DEFAULT_POSTER_URL)
+    else:
+        final_df['Poster_Url'] = DEFAULT_POSTER_URL
         
-    return df
+    # Ensure standard numeric columns exist to avoid UI crashes
+    if "Popularity" not in final_df.columns:
+        final_df["Popularity"] = 0.0
+    final_df["Popularity"] = pd.to_numeric(final_df["Popularity"], errors='coerce').fillna(0.0)
+    
+    if "Vote_Average" not in final_df.columns:
+        final_df["Vote_Average"] = 0.0
+    final_df["Vote_Average"] = pd.to_numeric(final_df["Vote_Average"], errors='coerce').fillna(0.0)
+        
+    return final_df
 
 if __name__ == "__main__":
     # Test execution
-    df = load_movie_dataset("../datasets/mymoviedb (1).csv")
+    df = load_all_datasets("data")
     print(f"Loaded {len(df)} movies successfully.")
     print("Sample Genre Array:", df['Genre_List'].iloc[0])

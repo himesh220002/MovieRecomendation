@@ -149,25 +149,31 @@
                 classDef active fill:#eab308,stroke:#000,stroke-width:2px,color:#000;
                 classDef done fill:#22c55e,stroke:#000,stroke-width:2px,color:#000;
 
-                CSV[(Raw CSV Dataset)]:::done
-                P1[Pandas Ingestion<br/>Clean Nulls & Extract Genres]:::done
-                API((TMDB/IMDB API<br/>Fallback Fetcher)):::process
+                CSV[(Raw CSV Datasets<br/>Movies + TV)]:::done
+                P1[Pandas Ingestion<br/>Clean Nulls & Merge]:::done
+                API_M((TMDB API<br/>Movie Posters)):::process
+                API_TV((TVMaze API<br/>TV Posters)):::process
                 YT((YouTube API<br/>Trailer Fetcher)):::process
-                P2[Enrichment Engine<br/>Check Poster URLs]:::process
+                P2[Enrichment Engine<br/>Dynamic Poster Filter]:::process
                 NLP[TF-IDF NLP Engine<br/>Cosine Matrix]:::done
-                UI[Streamlit Dashboard]:::process
+                UI[Streamlit Dashboard<br/>Clickable Cards]:::process
+                Modal(st.dialog Details)
 
                 CSV --> P1
                 P1 --> P2
-                P2 -- Missing Poster --> API
-                P2 -- User clicks Movie --> YT
-                API --> P2
+                P2 -- Missing Movie Poster --> API_M
+                P2 -- Missing TV Poster --> API_TV
+                API_M --> P2
+                API_TV --> P2
+                P2 -- Discard Invalid Posters --> P2
                 P2 --> NLP
                 NLP --> UI
+                UI -- Click Entire Card --> Modal
+                Modal --> YT
             </div>
             
-            <h3 style="color: var(--accent-color); margin-top: 1.5rem;">API Fallback Strategy <span class="tag-done">✅ DONE</span></h3>
-            <p>The system relies heavily on visual movie posters. If a row in the CSV has a blank or broken <code>Poster_Url</code>, the ingestion pipeline will dynamically ping the TMDB/IMDB API using the movie's <code>Title</code> and <code>Release_Date</code> to retrieve a high-quality poster image, ensuring the UI never looks broken.</p>
+            <h3 style="color: var(--accent-color); margin-top: 1.5rem;">API Fallbacks & Dynamic Filtering <span class="tag-done">✅ DONE</span></h3>
+            <p>The system heavily relies on stunning visual posters. If a row has a blank or broken <code>Poster_Url</code>, the pipeline dynamically pings the <strong>TMDB API for movies</strong> or the <strong>TVMaze API for TV shows</strong>. To maintain a premium UI, a <strong>Dynamic Filtering Engine</strong> ensures that any media completely failing to retrieve a poster is automatically skipped and replaced in real-time before hitting the discovery grid.</p>
         </div>
 
         <div class="card">
@@ -242,13 +248,12 @@
                 <p>Shows all movies marked as "My List", "Currently Watching", or "Watched". Users can update the status or assign a <strong>Rating (1 to 10 stars)</strong> to any movie in their library.</p>
             </div>
 
-            <h3 style="color: var(--accent-color); margin-top: 1.5rem;">🎬 Interactive Movie Details View <span class="tag-done">✅ DONE</span></h3>
-            <p>When a user clicks on ANY movie poster card across the app, a dedicated details view opens (via <code>st.dialog</code> or an expander). This view contains:</p>
+            <h3 style="color: var(--accent-color); margin-top: 1.5rem;">🎬 Clickable Cards & Stateful Dialogs <span class="tag-done">✅ DONE</span></h3>
+            <p>Instead of clumsy button rows or page-reloading URL parameters, the app utilizes highly customized UI hacks and modern Streamlit features:</p>
             <ul>
-                <li>High-resolution poster and full metadata (Release Date, Language, Rating).</li>
-                <li>The full plot <code>Overview</code>.</li>
-                <li><strong>Embedded Media:</strong> YouTube trailers or clips fetched dynamically.</li>
-                <li><strong>Action Buttons:</strong> "Add to My List", "Mark as Watched", "Rate 1-10".</li>
+                <li><strong>Invisible CSS Overlays:</strong> Entire poster cards act as clickable zones using advanced <code>:has()</code> CSS selectors that stretch an invisible Streamlit button over the HTML layout.</li>
+                <li><strong>Stateful Pop-ups:</strong> Clicking a card triggers an <code>@st.dialog</code> fragment. This opens the movie details without causing a full-page refresh, maintaining scroll position and context.</li>
+                <li><strong>Safe Action Execution:</strong> Background actions like "Add to My List" or "Rate 1-10" avoid fragile <code>on_click</code> Streamlit callbacks and instead use robust procedural logic paired with <code>st.rerun()</code>.</li>
             </ul>
         </div>
 

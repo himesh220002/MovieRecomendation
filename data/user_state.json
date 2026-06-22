@@ -1,9 +1,15 @@
 {
     "watched": [],
     "my_list": [
-        "Hotel Transylvania: Transformania"
+        "Hotel Transylvania: Transformania",
+        "The Commando",
+        "American Siege",
+        "CSI: Crime Scene Investigation",
+        "Family Guy"
     ],
-    "currently_watching": [],
+    "currently_watching": [
+        "Avengers: Infinity War"
+    ],
     "ratings": {
         "The Batman": 8
     }

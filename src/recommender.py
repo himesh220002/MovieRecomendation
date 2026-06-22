@@ -10,7 +10,7 @@ class RecommenderSystem:
         self.df = df.reset_index(drop=True)
         # We need a clean title to index mapping
         self.indices = pd.Series(self.df.index, index=self.df['Title'].str.lower()).to_dict()
-        self.cosine_sim = None
+        self.tfidf_matrix = None
         self._build_tfidf_matrix()
 
     def _build_tfidf_matrix(self):
@@ -20,26 +20,17 @@ class RecommenderSystem:
         """
         logger.info("Building TF-IDF Matrix...")
         
-        # Combine Overview and Genre for a richer text profile
-        # First, ensure Genre_List exists and is converted to string
-        if 'Genre_List' in self.df.columns:
-            genres_str = self.df['Genre_List'].apply(lambda x: " ".join(x) if isinstance(x, list) else "")
-        else:
-            genres_str = ""
-
-        # Create the combined feature
-        # We repeat genres so they have a higher weight in the TF-IDF vector
-        combined_features = self.df['Overview'].fillna('') + " " + genres_str + " " + genres_str
+        # Create a combined features column that includes both Overview and Genres
+        # This is extremely important because some newly uploaded datasets (like TV Series)
+        # might lack an Overview, so the NLP engine falls back to clustering them purely by Genre!
+        combined_features = self.df['Overview'].fillna('') + " " + self.df['Genre'].fillna('')
         
         # Initialize Vectorizer ignoring English stop words
         tfidf = TfidfVectorizer(stop_words='english')
         
         # Fit and transform the data
-        tfidf_matrix = tfidf.fit_transform(combined_features)
+        self.tfidf_matrix = tfidf.fit_transform(combined_features)
         
-        # Compute cosine similarity matrix
-        logger.info("Computing Cosine Similarity Matrix...")
-        self.cosine_sim = cosine_similarity(tfidf_matrix, tfidf_matrix)
         logger.info("NLP Engine Ready.")
 
     def get_recommendations(self, title: str, top_n: int = 10) -> pd.DataFrame:
@@ -58,8 +49,12 @@ class RecommenderSystem:
         if isinstance(idx, pd.Series):
             idx = idx.iloc[0]
 
+        # Compute cosine similarity ONLY for the requested movie vector against all others
+        movie_vector = self.tfidf_matrix[idx]
+        sim_scores_array = cosine_similarity(movie_vector, self.tfidf_matrix).flatten()
+
         # Get the pairwsie similarity scores of all movies with that movie
-        sim_scores = list(enumerate(self.cosine_sim[idx]))
+        sim_scores = list(enumerate(sim_scores_array))
 
         # Sort the movies based on the similarity scores
         sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
