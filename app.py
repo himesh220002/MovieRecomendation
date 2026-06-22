@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st # pyrefly: ignore [missing-import]
 import pandas as pd
 from src.data_loader import load_movie_dataset
 from src.recommender import RecommenderSystem

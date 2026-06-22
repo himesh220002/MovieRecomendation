@@ -4,3 +4,4 @@ pytest
 scikit-learn
 streamlit
 youtube-search-python
+httpx<0.28
