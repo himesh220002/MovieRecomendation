@@ -33,7 +33,7 @@ class RecommenderSystem:
         
         logger.info("NLP Engine Ready.")
 
-    def get_recommendations(self, title: str, top_n: int = 10) -> pd.DataFrame:
+    def get_recommendations(self, title: str, top_n: int = 12) -> pd.DataFrame:
         """
         Returns the top_n most similar movies based on content.
         """
@@ -59,7 +59,7 @@ class RecommenderSystem:
         # Sort the movies based on the similarity scores
         sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
 
-        # Get the scores of the 10 most similar movies (ignoring the first one which is itself)
+        # Get the scores of the 12 most similar movies (ignoring the first one which is itself)
         # We get top_n + 1 just in case, but we explicitly filter out the input title
         sim_scores = sim_scores[1:top_n+1]
 

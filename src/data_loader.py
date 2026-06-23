@@ -6,7 +6,13 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TMDB_API_KEY = os.environ.get("TMDB_API_KEY", None)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+OMDB_API_KEY = os.environ.get("OMDB_API_KEY", None)
 DEFAULT_POSTER_URL = "https://via.placeholder.com/500x750?text=No+Poster+Available"
 
 import urllib.parse
@@ -15,7 +21,7 @@ def fetch_poster_fallback(title: str, media_type: str = "Movie", year: str = Non
     """
     Fetches a movie or TV poster dynamically.
     For TV shows, it uses TVMaze (free, no API key).
-    For Movies, it uses TMDB if TMDB_API_KEY is set.
+    For Movies, it uses OMDB if OMDB_API_KEY is set.
     """
     if media_type == "TV Series":
         try:
@@ -29,27 +35,21 @@ def fetch_poster_fallback(title: str, media_type: str = "Movie", year: str = Non
             logger.error(f"Error fetching TVMaze poster for '{title}': {e}")
             return DEFAULT_POSTER_URL
 
-    if not TMDB_API_KEY:
-        logger.warning("TMDB_API_KEY not found. Using default poster for '%s'.", title)
+    if not OMDB_API_KEY:
+        logger.warning("OMDB_API_KEY not found. Using default poster for '%s'.", title)
         return DEFAULT_POSTER_URL
 
     try:
-        endpoint = "tv" if media_type == "TV Series" else "movie"
-        search_url = f"https://api.themoviedb.org/3/search/{endpoint}?api_key={TMDB_API_KEY}&query={title}"
+        search_url = f"http://www.omdbapi.com/?t={urllib.parse.quote(title)}&type=movie&apikey={OMDB_API_KEY}"
         if year:
-            if endpoint == "tv":
-                search_url += f"&first_air_date_year={year}"
-            else:
-                search_url += f"&year={year}"
+            search_url += f"&y={year}"
             
         response = requests.get(search_url, timeout=5)
         response.raise_for_status()
         data = response.json()
         
-        if data.get("results") and len(data["results"]) > 0:
-            poster_path = data["results"][0].get("poster_path")
-            if poster_path:
-                return f"https://image.tmdb.org/t/p/w500{poster_path}"
+        if data.get("Response") == "True" and data.get("Poster") and data.get("Poster") != "N/A":
+            return data.get("Poster")
                 
         return DEFAULT_POSTER_URL
     except Exception as e:

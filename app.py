@@ -7,6 +7,32 @@ import urllib.parse
 # pyrefly: ignore [missing-import]
 from youtubesearchpython import VideosSearch
 
+import base64
+import os
+import random
+
+DUMMY_POSTERS = []
+try:
+    poster_dir = "posters"
+    if os.path.exists(poster_dir):
+        for filename in os.listdir(poster_dir):
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                filepath = os.path.join(poster_dir, filename)
+                ext = filename.split('.')[-1].lower()
+                mime = f"image/{ext}" if ext != 'jpg' else "image/jpeg"
+                with open(filepath, "rb") as f:
+                    _bytes = f.read()
+                    _b64 = base64.b64encode(_bytes).decode()
+                    DUMMY_POSTERS.append(f"data:{mime};base64,{_b64}")
+except Exception:
+    pass
+
+if not DUMMY_POSTERS:
+    DUMMY_POSTERS.append(DEFAULT_POSTER_URL)
+
+def get_random_dummy_poster():
+    return random.choice(DUMMY_POSTERS)
+
 # Cache Trailer Searches
 @st.cache_data
 def get_trailer_id(movie_title):
@@ -50,11 +76,11 @@ st.markdown("""
         padding: 10px;
         border-radius: 10px;
         transition: transform 0.2s, box-shadow 0.2s;
-        height: 520px;
+        height: 535px;
         margin-bottom: 10px;
         display: flex;
         flex-direction: column;
-        justify-content: flex-start;
+        justify-content: flex-center;
     }
     
     /* Target the Streamlit column that contains the movie card */
@@ -112,9 +138,11 @@ def movie_details_dialog(movie_row):
     media_type = movie_row.get('Media_Type', 'Movie')
 
     # Dynamically fetch poster if it's missing, broken ("0"), or the fallback
-    if str(poster_url) == "0" or poster_url == DEFAULT_POSTER_URL or pd.isna(poster_url):
+    if str(poster_url) == "0" or poster_url == DEFAULT_POSTER_URL or pd.isna(poster_url) or str(poster_url).strip().upper() == "N/A":
         year_str = release_year if release_year != 'Unknown' else None
         poster_url = get_dynamic_poster_url(title, media_type, year_str)
+        if poster_url == DEFAULT_POSTER_URL or str(poster_url).strip().upper() == "N/A":
+            poster_url = get_random_dummy_poster()
 
     current_status = "None"
     for cat in ["watched", "my_list", "currently_watching"]:
@@ -218,12 +246,15 @@ def movie_details_dialog(movie_row):
     st.video(f"https://www.youtube.com/watch?v={video_id}", autoplay=True, muted=True)
 
 # UI Function to render a row of movies
-def render_movie_grid(movies_df, key_prefix="", num_cols=5):
+def render_movie_grid(movies_df, key_prefix="", num_cols=6):
     if len(movies_df) == 0:
         st.write("No movies found.")
         return
 
     cols = st.columns(num_cols, gap="small")
+    placeholders = []
+    fetch_queue = []
+
     for i, (_, row) in enumerate(movies_df.head(15).iterrows()):
         with cols[i % num_cols]:
             release_raw = row.get('Release_Date', 'Unknown')
@@ -239,23 +270,43 @@ def render_movie_grid(movies_df, key_prefix="", num_cols=5):
             movie_title_encoded = urllib.parse.quote(row['Title'])
             
             poster_url = row.get('Poster_Url')
-            media_type = row.get('Media_Type', 'Movie')
-            if str(poster_url) == "0" or poster_url == DEFAULT_POSTER_URL or pd.isna(poster_url):
-                year_str = release_year if release_year != 'Unknown' else None
-                poster_url = get_dynamic_poster_url(row['Title'], media_type, year_str)
+            needs_fetch = str(poster_url) == "0" or poster_url == DEFAULT_POSTER_URL or pd.isna(poster_url) or str(poster_url).strip().upper() == "N/A"
             
-            card_html = f"""
-            <div style="display: block;" class="movie-card">
-                <img src="{poster_url}" style="width: 100%; height: 425px; object-fit: cover; border-radius: 8px;">
-                <div style='font-size: 0.9rem; color: #94a3b8; text-align: center; margin-top: 10px;'>
-                    {release_year} | {rating}⭐ | {genres}
+            def build_card_html(p_url):
+                return f"""
+                <div style="display: block;" class="movie-card">
+                    <img src="{p_url}" style="width: 100%; height: 420px; object-fit: cover; border-radius: 8px;">
+                    <div style='font-size: 0.9rem; color: #94a3b8; text-align: center; margin-top: 4px;'>
+                        {release_year} | {rating}⭐ | {genres}
+                    </div>
+                    <p style='text-align: center; text-size: 1rem; margin-top: 2px; color: white; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;'>{row['Title']}</p>
                 </div>
-                <p style='text-align: center; text-size: 1rem; margin-top: 0.5rem; color: white; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;'>{row['Title']}</p>
-            </div>
-            """
-            st.markdown(card_html, unsafe_allow_html=True)
+                """
+                
+            card_placeholder = st.empty()
+            placeholders.append((card_placeholder, build_card_html))
+            
+            if needs_fetch:
+                card_placeholder.markdown(build_card_html(get_random_dummy_poster()), unsafe_allow_html=True)
+                fetch_queue.append((i, row))
+            else:
+                card_placeholder.markdown(build_card_html(poster_url), unsafe_allow_html=True)
+                
             if st.button("View Details", key=f"btn_{key_prefix}_{i}_{movie_title_encoded}", type="primary"):
                 movie_details_dialog(row)
+
+    for idx, row in fetch_queue:
+        release_raw = row.get('Release_Date', 'Unknown')
+        release_year = str(release_raw)[:4] if pd.notna(release_raw) and release_raw != 'Unknown' else 'Unknown'
+        media_type = row.get('Media_Type', 'Movie')
+        year_str = release_year if release_year != 'Unknown' else None
+        
+        poster_url = get_dynamic_poster_url(row['Title'], media_type, year_str)
+        if poster_url == DEFAULT_POSTER_URL or str(poster_url).strip().upper() == "N/A":
+            poster_url = get_random_dummy_poster()
+            
+        p_holder, build_func = placeholders[idx]
+        p_holder.markdown(build_func(poster_url), unsafe_allow_html=True)
 
 # Main App Layout
 st.title("🍿 AI Movie Recommendations")
@@ -264,7 +315,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎬 Movies", "📺 TV Shows", "🔍 Se
 
 # Helper function for headers with refresh buttons
 def render_header_with_refresh(title, key):
-    col1, col2 = st.columns([10, 1])
+    col1, col2 = st.columns([12, 1])
     with col1:
         st.header(title)
     with col2:
@@ -275,31 +326,12 @@ def render_header_with_refresh(title, key):
 
 def get_valid_movies(pool_df, num_needed, seed):
     shuffled_pool = pool_df.sample(frac=1, random_state=seed) if len(pool_df) > 0 else pool_df
-    valid_rows = []
-    for _, row in shuffled_pool.iterrows():
-        poster_url = row.get('Poster_Url')
-        media_type = row.get('Media_Type', 'Movie')
-        release_raw = row.get('Release_Date', 'Unknown')
-        release_year = str(release_raw)[:4] if pd.notna(release_raw) and release_raw != 'Unknown' else 'Unknown'
-        
-        if str(poster_url) == "0" or poster_url == DEFAULT_POSTER_URL or pd.isna(poster_url):
-            year_str = release_year if release_year != 'Unknown' else None
-            poster_url = get_dynamic_poster_url(row['Title'], media_type, year_str)
-            
-        if poster_url != DEFAULT_POSTER_URL:
-            row_dict = row.to_dict()
-            row_dict['Poster_Url'] = poster_url
-            valid_rows.append(row_dict)
-            
-        if len(valid_rows) >= num_needed:
-            break
-            
-    return pd.DataFrame(valid_rows) if valid_rows else pd.DataFrame(columns=pool_df.columns)
+    return shuffled_pool.head(num_needed)
 
 def render_discover_page(discover_df, prefix):
     seed = render_header_with_refresh("Trending Now", f"{prefix}_trending")
     trending_pool = discover_df.sort_values(by="Popularity", ascending=False).head(60)
-    trending = get_valid_movies(trending_pool, 10, seed)
+    trending = get_valid_movies(trending_pool, 12, seed)
     render_movie_grid(trending, key_prefix=f"{prefix}_trending")
 
     genres_to_display = [
@@ -326,7 +358,7 @@ def render_discover_page(discover_df, prefix):
         seed = render_header_with_refresh(display_name, f"{prefix}_{actual_genre}")
         
         genre_pool = genre_df.sort_values(by="Popularity", ascending=False).head(60)
-        genre_top = get_valid_movies(genre_pool, 10, seed)
+        genre_top = get_valid_movies(genre_pool, 12, seed)
         
         render_movie_grid(genre_top, key_prefix=f"{prefix}_genre_{actual_genre}")
     
@@ -336,7 +368,7 @@ def render_discover_page(discover_df, prefix):
         last_watched = watched[-1]
         st.divider()
         st.header(f"Because you watched **{last_watched}**...")
-        recs = recommender.get_recommendations(last_watched, top_n=10)
+        recs = recommender.get_recommendations(last_watched, top_n=12)
         if len(recs) > 0:
             # Filter recommendations to match the current media type tab
             media_type = "Movie" if prefix == "movies" else "TV Series"
