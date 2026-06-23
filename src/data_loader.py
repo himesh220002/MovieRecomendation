@@ -17,44 +17,152 @@ DEFAULT_POSTER_URL = "https://via.placeholder.com/500x750?text=No+Poster+Availab
 
 import urllib.parse
 
+def is_valid_poster(url: str, timeout: float = 2.0) -> bool:
+    if not url or pd.isna(url) or url == "N/A" or url == DEFAULT_POSTER_URL or str(url) == "0":
+        return False
+    if str(url).startswith('data:'):
+        return True
+    try:
+        r = requests.get(url, stream=True, timeout=timeout)
+        return r.status_code < 400
+    except Exception:
+        return False
+
 def fetch_poster_fallback(title: str, media_type: str = "Movie", year: str = None) -> str:
     """
-    Fetches a movie or TV poster dynamically.
-    For TV shows, it uses TVMaze (free, no API key).
-    For Movies, it uses OMDB if OMDB_API_KEY is set.
+    Fetches a movie or TV poster dynamically using a cascading fallback:
+    1. Try TVMaze (Fastest, Free)
+    2. Try OMDB API (Requires API Key)
+    3. Return DEFAULT_POSTER_URL (which triggers the UI's dummy poster logic)
     """
-    if media_type == "TV Series":
-        try:
-            search_url = f"https://api.tvmaze.com/search/shows?q={urllib.parse.quote(title)}"
-            response = requests.get(search_url, timeout=5)
-            response.raise_for_status()
+    
+    # Priority 1: TVMaze
+    try:
+        search_url = f"https://api.tvmaze.com/search/shows?q={urllib.parse.quote(title)}"
+        response = requests.get(search_url, timeout=5)
+        if response.status_code == 200:
             data = response.json()
             if data and len(data) > 0 and 'show' in data[0] and 'image' in data[0]['show'] and data[0]['show']['image']:
-                return data[0]['show']['image'].get('original', DEFAULT_POSTER_URL)
-        except Exception as e:
-            logger.error(f"Error fetching TVMaze poster for '{title}': {e}")
-            return DEFAULT_POSTER_URL
-
-    if not OMDB_API_KEY:
-        logger.warning("OMDB_API_KEY not found. Using default poster for '%s'.", title)
-        return DEFAULT_POSTER_URL
-
-    try:
-        search_url = f"http://www.omdbapi.com/?t={urllib.parse.quote(title)}&type=movie&apikey={OMDB_API_KEY}"
-        if year:
-            search_url += f"&y={year}"
-            
-        response = requests.get(search_url, timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        
-        if data.get("Response") == "True" and data.get("Poster") and data.get("Poster") != "N/A":
-            return data.get("Poster")
-                
-        return DEFAULT_POSTER_URL
+                poster = data[0]['show']['image'].get('original')
+                if poster and is_valid_poster(poster, timeout=1.5):
+                    return poster
     except Exception as e:
-        logger.error(f"Error fetching poster for '{title}': {e}")
-        return DEFAULT_POSTER_URL
+        logger.debug(f"TVMaze fallback missed for '{title}': {e}")
+
+    # Priority 2: OMDB
+    if OMDB_API_KEY:
+        try:
+            # We omit &type=movie if it's explicitly a TV Series to help OMDB find it
+            type_param = "&type=movie" if media_type == "Movie" else ""
+            search_url = f"http://www.omdbapi.com/?t={urllib.parse.quote(title)}{type_param}&apikey={OMDB_API_KEY}"
+            if year:
+                search_url += f"&y={year}"
+                
+            response = requests.get(search_url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("Response") == "True" and data.get("Poster") and data.get("Poster") != "N/A":
+                    poster = data.get("Poster")
+                    if is_valid_poster(poster, timeout=1.5):
+                        return poster
+        except Exception as e:
+            logger.debug(f"OMDB fallback missed for '{title}': {e}")
+
+    # Priority 3: Fallback 
+    # (Returning DEFAULT_POSTER_URL tells the UI to keep the random character poster)
+    return DEFAULT_POSTER_URL
+
+import re
+
+LANGUAGE_MAP = {
+    "en": "English", "eng": "English", "english": "English",
+    "fr": "French", "fre": "French", "fra": "French", "french": "French",
+    "es": "Spanish", "spa": "Spanish", "spanish": "Spanish",
+    "ja": "Japanese", "jpn": "Japanese", "japanese": "Japanese",
+    "hi": "Hindi", "hin": "Hindi", "hindi": "Hindi",
+    "ko": "Korean", "kor": "Korean", "korean": "Korean",
+    "zh": "Chinese", "zho": "Chinese", "chi": "Chinese", "chinese": "Chinese",
+    "de": "German", "deu": "German", "ger": "German", "german": "German",
+    "ru": "Russian", "rus": "Russian", "russian": "Russian",
+    "it": "Italian", "ita": "Italian", "italian": "Italian",
+    "pt": "Portuguese", "por": "Portuguese", "portuguese": "Portuguese",
+    "ar": "Arabic", "ara": "Arabic", "arabic": "Arabic",
+    "te": "Telugu", "tel": "Telugu", "telugu": "Telugu",
+    "ta": "Tamil", "tam": "Tamil", "tamil": "Tamil",
+    "ml": "Malayalam", "mal": "Malayalam", "malayalam": "Malayalam",
+    "bn": "Bengali", "ben": "Bengali", "bengali": "Bengali"
+}
+
+def normalize_languages(lang_list):
+    """
+    Accepts a list of language strings or a single string (comma-separated).
+    Normalizes short codes to full names and deduplicates.
+    """
+    if not lang_list:
+        return []
+    
+    if isinstance(lang_list, str):
+        raw_langs = re.split(r'[,/]', lang_list)
+    else:
+        raw_langs = []
+        for item in lang_list:
+            if isinstance(item, str):
+                raw_langs.extend(re.split(r'[,/]', item))
+                
+    normalized = set()
+    for lang in raw_langs:
+        lang = lang.strip().lower()
+        if not lang or lang == "n/a" or lang == "none":
+            continue
+            
+        full_name = LANGUAGE_MAP.get(lang)
+        if full_name:
+            normalized.add(full_name)
+        else:
+            normalized.add(lang.title())
+            
+    return sorted(list(normalized))
+
+def fetch_extended_metadata(title: str, media_type: str = "Movie", year: str = None) -> dict:
+    """
+    Fetches extended metadata (languages) from APIs.
+    We try both TVMaze and OMDB to aggregate languages.
+    """
+    metadata = {
+        "languages": []
+    }
+    
+    # TVMaze
+    try:
+        search_url = f"https://api.tvmaze.com/search/shows?q={urllib.parse.quote(title)}"
+        response = requests.get(search_url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0 and 'show' in data[0]:
+                show_data = data[0]['show']
+                if 'language' in show_data and show_data['language']:
+                    metadata["languages"].append(show_data['language'])
+    except Exception as e:
+        logger.debug(f"TVMaze extended fetch failed for '{title}': {e}")
+
+    # OMDB
+    if OMDB_API_KEY:
+        try:
+            type_param = "&type=movie" if media_type == "Movie" else ""
+            search_url = f"http://www.omdbapi.com/?t={urllib.parse.quote(title)}{type_param}&apikey={OMDB_API_KEY}"
+            if year:
+                search_url += f"&y={year}"
+                
+            response = requests.get(search_url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("Response") == "True":
+                    if data.get("Language") and data.get("Language") != "N/A":
+                        metadata["languages"].append(data.get("Language"))
+        except Exception as e:
+            logger.debug(f"OMDB extended fetch failed for '{title}': {e}")
+
+    return metadata
 
 def parse_genres(genre_string):
     """

@@ -1,6 +1,7 @@
 import streamlit as st # pyrefly: ignore [missing-import]
+import streamlit.components.v1 as components # pyrefly: ignore [missing-import]
 import pandas as pd
-from src.data_loader import load_all_datasets, fetch_poster_fallback, DEFAULT_POSTER_URL
+from src.data_loader import load_all_datasets, fetch_poster_fallback, DEFAULT_POSTER_URL, fetch_extended_metadata, normalize_languages, is_valid_poster
 from src.recommender import RecommenderSystem
 from src.user_state import UserState
 import urllib.parse
@@ -50,12 +51,20 @@ def get_dynamic_poster_url(title, media_type, year):
     poster = fetch_poster_fallback(title, media_type=media_type, year=year)
     return poster
 
+@st.cache_data
+def get_extended_metadata_cached(title, media_type, year):
+    return fetch_extended_metadata(title, media_type=media_type, year=year)
+
+@st.cache_data
+def is_valid_poster_cached(url):
+    return is_valid_poster(url, timeout=1.0)
+
 # Page Config
 st.set_page_config(page_title="Netflix Clone: AI Recommender", layout="wide", page_icon="🍿")
 
 # Load Backend (Cached)
 @st.cache_data
-def load_data():
+def load_data_v2():
     # Use relative path inside the project directory so Streamlit Cloud can find it!
     return load_all_datasets("data")
 
@@ -63,7 +72,7 @@ def load_data():
 def load_recommender(_df):
     return RecommenderSystem(_df)
 
-df = load_data()
+df = load_data_v2()
 recommender = load_recommender(df)
 user_state = UserState()
 
@@ -76,7 +85,7 @@ st.markdown("""
         padding: 10px;
         border-radius: 10px;
         transition: transform 0.2s, box-shadow 0.2s;
-        height: 535px;
+        height: 520px;
         margin-bottom: 10px;
         display: flex;
         flex-direction: column;
@@ -114,12 +123,26 @@ st.markdown("""
         transform: scale(1.05);
         box-shadow: 0 10px 20px rgba(0,0,0,0.5);
     }
+    
+    .load-square {
+        width: 8px;
+        height: 8px;
+        background-color: rgba(255, 255, 255, 0.9);
+        border-radius: 2px;
+        animation: pulseSquare 0.8s infinite alternate;
+        box-shadow: 0 0 5px rgba(0,0,0,0.8);
+    }
+    @keyframes pulseSquare {
+        0% { transform: scale(1); opacity: 0.4; }
+        100% { transform: scale(1.5); opacity: 1; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # Dialog for Movie Details
 @st.dialog("🎬 Movie Details", width="large")
 def movie_details_dialog(movie_row):
+
     if "pending_toast" in st.session_state:
         st.toast(st.session_state.pop("pending_toast"))
         
@@ -137,12 +160,39 @@ def movie_details_dialog(movie_row):
     genres = ", ".join(movie_row.get('Genre_List', []))
     media_type = movie_row.get('Media_Type', 'Movie')
 
+    # Fetch extended metadata (languages)
+    extended_data = get_extended_metadata_cached(title, media_type, release_year if release_year != 'Unknown' else None)
+        
+    csv_language = movie_row.get('Original_Language')
+    if pd.isna(csv_language) and 'Language' in movie_row:
+        csv_language = movie_row.get('Language')
+        
+    all_langs = []
+    if pd.notna(csv_language):
+        all_langs.append(str(csv_language))
+    all_langs.extend(extended_data["languages"])
+    
+    final_languages = normalize_languages(all_langs)
+    lang_str = ", ".join(final_languages) if final_languages else "Unknown"
+
     # Dynamically fetch poster if it's missing, broken ("0"), or the fallback
     if str(poster_url) == "0" or poster_url == DEFAULT_POSTER_URL or pd.isna(poster_url) or str(poster_url).strip().upper() == "N/A":
         year_str = release_year if release_year != 'Unknown' else None
         poster_url = get_dynamic_poster_url(title, media_type, year_str)
         if poster_url == DEFAULT_POSTER_URL or str(poster_url).strip().upper() == "N/A":
             poster_url = get_random_dummy_poster()
+
+    # Final check: if the poster URL is a remote link, verify it doesn't 404
+    if poster_url and not poster_url.startswith('data:'):
+        try:
+            import requests
+            r = requests.get(poster_url, stream=True, timeout=2)
+            if r.status_code >= 400:
+                poster_url = get_random_dummy_poster()
+        except:
+            poster_url = get_random_dummy_poster()
+
+    # Proceed with dialog content
 
     current_status = "None"
     for cat in ["watched", "my_list", "currently_watching"]:
@@ -174,6 +224,7 @@ def movie_details_dialog(movie_row):
         if media_type == "TV Series":
             st.write(f"**📺 TV Series** | **Rating:** {vote_avg}/10 ⭐")
             st.write(f"**Genres:** {genres}")
+            st.write(f"**Languages:** {lang_str}")
             st.write(f"**Year:** {release_year}")
             
             seasons = movie_row.get("Seasons")
@@ -193,6 +244,7 @@ def movie_details_dialog(movie_row):
         else:
             st.write(f"**🎬 Movie** | **Rating:** {vote_avg}/10 ⭐")
             st.write(f"**Genres:** {genres}")
+            st.write(f"**Languages:** {lang_str}")
             st.write(f"**Year:** {release_year}")
             
         st.divider()
@@ -242,8 +294,61 @@ def movie_details_dialog(movie_row):
     st.divider()
     st.write("### 🎥 Watch Trailer")
     
-    video_id = get_trailer_id(title)
-    st.video(f"https://www.youtube.com/watch?v={video_id}", autoplay=True, muted=True)
+    # 1. Initialize and anchor the placeholder container
+    video_placeholder = st.empty()
+    
+    # 2. CLEAR the layout space immediately so old frames evaporate instantly
+    video_placeholder.empty()
+
+    with st.spinner("Loading trailer..."):
+        video_id = get_trailer_id(title)
+
+    if video_id:
+        # Use a single static container id to protect global YT execution context
+        html_code = f"""
+        <div id="yt-player-container" style="width: 100%; border-radius: 10px; overflow: hidden; background: #000;"></div>
+        <script>
+          // Check if YouTube iframe API script tag has already been attached
+          if (!window.YT) {{
+            var tag = document.createElement('script');
+            tag.src = "https://www.youtube.com/iframe_api";
+            var firstScriptTag = document.getElementsByTagName('script')[0];
+            firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+          }} else if (window.YT && typeof window.YT.Player === 'function') {{
+            // If the script already exists, build the player engine immediately
+            buildYTPlayer();
+          }}
+
+          function onYouTubeIframeAPIReady() {{
+            buildYTPlayer();
+          }}
+
+          function buildYTPlayer() {{
+            new YT.Player('yt-player-container', {{
+              height: '800',
+              width: '100%',
+              videoId: '{video_id}',
+              playerVars: {{
+                'playsinline': 1,
+                'autoplay': 0,       // Keep video completely paused upon loading
+                'rel': 0,
+                'modestbranding': 1
+              }},
+              events: {{
+                'onReady': function(event) {{
+                    event.target.setVolume(15); // Safely caps initial user audio at 15%
+                    // FIXED: Removed event.target.playVideo() to enforce no autoplay
+                }}
+              }}
+            }});
+          }}
+        </script>
+        """
+        # 3. Mount the iframe strictly inside the bound placeholder
+        with video_placeholder.container():
+            components.html(html_code, height=830)
+    else:
+        video_placeholder.write("Trailer not available.")
 
 # UI Function to render a row of movies
 def render_movie_grid(movies_df, key_prefix="", num_cols=6):
@@ -272,27 +377,32 @@ def render_movie_grid(movies_df, key_prefix="", num_cols=6):
             poster_url = row.get('Poster_Url')
             needs_fetch = str(poster_url) == "0" or poster_url == DEFAULT_POSTER_URL or pd.isna(poster_url) or str(poster_url).strip().upper() == "N/A"
             
-            def build_card_html(p_url):
-                return f"""
-                <div style="display: block;" class="movie-card">
-                    <img src="{p_url}" style="width: 100%; height: 420px; object-fit: cover; border-radius: 8px;">
-                    <div style='font-size: 0.9rem; color: #94a3b8; text-align: center; margin-top: 4px;'>
-                        {release_year} | {rating}⭐ | {genres}
-                    </div>
-                    <p style='text-align: center; text-size: 1rem; margin-top: 2px; color: white; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;'>{row['Title']}</p>
-                </div>
-                """
+            def build_card_html(p_url, is_loading=False, cap_yr=release_year, cap_rat=rating, cap_gen=genres, cap_title=row['Title']):
+                loading_overlay = ""
+                if is_loading:
+                    loading_overlay = '<div style="position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; z-index: 10;"><div class="load-square" style="animation-delay: 0s;"></div><div class="load-square" style="animation-delay: 0.2s;"></div><div class="load-square" style="animation-delay: 0.4s;"></div></div>'
+                
+                fallback_poster = get_random_dummy_poster()
+                
+                return f"""<div style="display: block;" class="movie-card">
+<div style="position: relative; line-height: 0;">
+<img src="{p_url}" onerror="this.onerror=null; this.src='{fallback_poster}';" style="width: 100%; height: 420px; object-fit: cover; border-radius: 8px;">{loading_overlay}
+</div>
+<div style='font-size: 0.9rem; color: #94a3b8; text-align: center; margin-top: 8px; line-height: 1.2;'>{cap_yr} | {cap_rat}⭐ | {cap_gen}</div>
+<p style='text-align: center; text-size: 1rem; margin-top: 2px; color: white; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.2;'>{cap_title}</p>
+</div>"""
                 
             card_placeholder = st.empty()
             placeholders.append((card_placeholder, build_card_html))
             
             if needs_fetch:
-                card_placeholder.markdown(build_card_html(get_random_dummy_poster()), unsafe_allow_html=True)
+                card_placeholder.markdown(build_card_html(get_random_dummy_poster(), is_loading=True), unsafe_allow_html=True)
                 fetch_queue.append((i, row))
             else:
-                card_placeholder.markdown(build_card_html(poster_url), unsafe_allow_html=True)
+                card_placeholder.markdown(build_card_html(poster_url, is_loading=False), unsafe_allow_html=True)
                 
             if st.button("View Details", key=f"btn_{key_prefix}_{i}_{movie_title_encoded}", type="primary"):
+                # Details load instantly, video loads asynchronously via rerun
                 movie_details_dialog(row)
 
     for idx, row in fetch_queue:
@@ -306,7 +416,7 @@ def render_movie_grid(movies_df, key_prefix="", num_cols=6):
             poster_url = get_random_dummy_poster()
             
         p_holder, build_func = placeholders[idx]
-        p_holder.markdown(build_func(poster_url), unsafe_allow_html=True)
+        p_holder.markdown(build_func(poster_url, is_loading=False), unsafe_allow_html=True)
 
 # Main App Layout
 st.title("🍿 AI Movie Recommendations")

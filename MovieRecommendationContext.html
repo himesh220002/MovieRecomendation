@@ -151,29 +151,29 @@
 
                 CSV[(Raw CSV Datasets<br/>Movies + TV)]:::done
                 P1[Pandas Ingestion<br/>Clean Nulls & Merge]:::done
-                API_M((TMDB API<br/>Movie Posters)):::process
-                API_TV((TVMaze API<br/>TV Posters)):::process
-                YT((YouTube API<br/>Trailer Fetcher)):::process
-                P2[Enrichment Engine<br/>Dynamic Poster Filter]:::process
                 NLP[TF-IDF NLP Engine<br/>Cosine Matrix]:::done
-                UI[Streamlit Dashboard<br/>Clickable Cards]:::process
+                UI[Streamlit Dashboard<br/>Fast Lazy Render]:::done
+                DP[(Local Filesystem<br/>Dummy Posters)]:::database
+                API_M((OMDB API<br/>Movie Posters)):::external
+                API_TV((TVMaze API<br/>TV Posters)):::external
+                YT((YouTube API<br/>Trailer Fetcher)):::external
                 Modal(st.dialog Details)
 
                 CSV --> P1
-                P1 --> P2
-                P2 -- Missing Movie Poster --> API_M
-                P2 -- Missing TV Poster --> API_TV
-                API_M --> P2
-                API_TV --> P2
-                P2 -- Discard Invalid Posters --> P2
-                P2 --> NLP
+                P1 --> NLP
                 NLP --> UI
-                UI -- Click Entire Card --> Modal
+                UI -->|Missing Poster| DP
+                DP -->|Instant Placeholder| UI
+                UI -->|Async Fetch Movie| API_M
+                UI -->|Async Fetch TV| API_TV
+                API_M -->|Update Real Poster| UI
+                API_TV -->|Update Real Poster| UI
+                UI -->|Click Entire Card| Modal
                 Modal --> YT
             </div>
             
-            <h3 style="color: var(--accent-color); margin-top: 1.5rem;">API Fallbacks & Dynamic Filtering <span class="tag-done">✅ DONE</span></h3>
-            <p>The system heavily relies on stunning visual posters. If a row has a blank or broken <code>Poster_Url</code>, the pipeline dynamically pings the <strong>TMDB API for movies</strong> or the <strong>TVMaze API for TV shows</strong>. To maintain a premium UI, a <strong>Dynamic Filtering Engine</strong> ensures that any media completely failing to retrieve a poster is automatically skipped and replaced in real-time before hitting the discovery grid.</p>
+            <h3 style="color: var(--accent-color); margin-top: 1.5rem;">API Fallbacks & Asynchronous Lazy Loading <span class="tag-done">✅ DONE</span></h3>
+            <p>The system heavily relies on stunning visual posters. If a row has a blank or broken <code>Poster_Url</code>, the pipeline initially renders a random placeholder poster to ensure the UI loads blazingly fast. In the background, it dynamically pings the <strong>OMDB API for movies</strong> or the <strong>TVMaze API for TV shows</strong>. Once an actual poster is retrieved, the random dummy poster is seamlessly replaced on the grid without reloading the page. If the API returns 'N/A', the system elegantly maintains the character dummy poster.</p>
         </div>
 
         <div class="card">
